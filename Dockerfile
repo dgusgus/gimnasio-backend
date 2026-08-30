@@ -4,6 +4,11 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile
 COPY . .
+# prisma.config.ts necesita poder leer DATABASE_URL/DIRECT_URL para cargar,
+# aunque "generate" no abre conexión real a la base. Los reales los pone
+# Render en runtime — estos son solo para que el build no falle.
+ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"
+ENV DIRECT_URL="postgresql://user:pass@localhost:5432/db"
 RUN pnpm prisma generate
 RUN pnpm build
 
