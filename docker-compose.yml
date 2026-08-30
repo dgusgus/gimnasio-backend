@@ -18,6 +18,7 @@ services:
       - db
     environment:
       DATABASE_URL: postgresql://gimnasio:gimnasio@db:5432/gimnasio?schema=public
+      DIRECT_URL: postgresql://gimnasio:gimnasio@db:5432/gimnasio?schema=public
       JWT_SECRET: cambia-esto-en-produccion
       PORT: 3000
     ports:
