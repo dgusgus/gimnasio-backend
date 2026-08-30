@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Rol {
+  ADMIN
+  INSTRUCTOR
+  RECEPCION
+}
+
+enum TipoMembresia {
+  MENSUAL
+  TRIMESTRAL
+  SEMESTRAL
+  ANUAL
+}
+
+enum EstadoMembresia {
+  ACTIVA
+  VENCIDA
+  CANCELADA
+}
+
+enum MetodoPago {
+  EFECTIVO
+  TARJETA
+  TRANSFERENCIA
+  QR
+}
+
+model Usuario {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  passwordHash   String
+  nombre         String
+  rol            Rol          @default(RECEPCION)
+  activo         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  instructor     Instructor?
+  pagosRegistrados Pago[]     @relation("PagosRegistradosPor")
+
+  @@map("usuarios")
+}
+
+model Instructor {
+  id            String   @id @default(uuid())
+  usuarioId     String   @unique
+  usuario       Usuario  @relation(fields: [usuarioId], references: [id])
+  especialidad  String?
+  telefono      String?
+  activo        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  bonos         Bono[]
+
+  @@map("instructores")
+}
+
+model Bono {
+  id           String     @id @default(uuid())
+  instructorId String
+  instructor   Instructor @relation(fields: [instructorId], references: [id])
+  monto        Decimal    @db.Decimal(10, 2)
+  motivo       String
+  fecha        DateTime   @default(now())
+
+  @@map("bonos")
+}
+
+model Cliente {
+  id             String      @id @default(uuid())
+  nombre         String
+  telefono       String?
+  email          String?
+  fechaRegistro  DateTime    @default(now())
+  activo         Boolean     @default(true)
+
+  membresias     Membresia[]
+
+  @@map("clientes")
+}
+
+model Membresia {
+  id                String          @id @default(uuid())
+  clienteId         String
+  cliente           Cliente         @relation(fields: [clienteId], references: [id])
+  tipo              TipoMembresia
+  fechaInicio       DateTime
+  fechaVencimiento  DateTime
+  estado            EstadoMembresia @default(ACTIVA)
+  createdAt         DateTime        @default(now())
+
+  pagos             Pago[]
+
+  @@index([clienteId])
+  @@index([estado])
+  @@map("membresias")
+}
+
+model Pago {
+  id               String     @id @default(uuid())
+  membresiaId      String
+  membresia        Membresia  @relation(fields: [membresiaId], references: [id])
+  monto            Decimal    @db.Decimal(10, 2)
+  metodo           MetodoPago
+  fecha            DateTime   @default(now())
+  registradoPorId  String?
+  registradoPor    Usuario?   @relation("PagosRegistradosPor", fields: [registradoPorId], references: [id])
+
+  @@index([membresiaId])
+  @@map("pagos")
+}

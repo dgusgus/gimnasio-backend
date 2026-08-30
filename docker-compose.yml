@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gimnasio
+      POSTGRES_PASSWORD: gimnasio
+      POSTGRES_DB: gimnasio
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://gimnasio:gimnasio@db:5432/gimnasio?schema=public
+      JWT_SECRET: cambia-esto-en-produccion
+      PORT: 3000
+    ports:
+      - "3000:3000"
+
+volumes:
+  db_data:
