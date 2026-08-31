@@ -62,6 +62,23 @@ const bonoSchema = z.object({
   motivo: z.string().min(2),
 });
 
+instructoresRouter.get(
+  "/:id/bonos",
+  asyncHandler(async (req, res) => {
+    const instructor = await prisma.instructor.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!instructor) throw new HttpError(404, "Instructor no encontrado");
+
+    const bonos = await prisma.bono.findMany({
+      where: { instructorId: req.params.id },
+      orderBy: { fecha: "desc" },
+    });
+
+    res.json(bonos);
+  })
+);
+
 instructoresRouter.post(
   "/:id/bonos",
   requireRol("ADMIN"),

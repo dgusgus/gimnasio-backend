@@ -1,0 +1,7 @@
+POST https://gimnasio-backend-h6dw.onrender.com/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@gimnasio.com",
+  "password": "admin1234"
+}
