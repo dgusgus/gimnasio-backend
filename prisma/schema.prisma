@@ -11,17 +11,12 @@ enum Rol {
   ADMIN
   INSTRUCTOR
   RECEPCION
-}
-
-enum TipoMembresia {
-  MENSUAL
-  TRIMESTRAL
-  SEMESTRAL
-  ANUAL
+  ALUMNO // preparado para cuando el alumno tenga login
 }
 
 enum EstadoMembresia {
   ACTIVA
+  CONGELADA
   VENCIDA
   CANCELADA
 }
@@ -33,32 +28,66 @@ enum MetodoPago {
   QR
 }
 
-model Usuario {
-  id             String       @id @default(uuid())
-  email          String       @unique
-  passwordHash   String
-  nombre         String
-  rol            Rol          @default(RECEPCION)
-  activo         Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+enum DiaSemana {
+  LUNES
+  MARTES
+  MIERCOLES
+  JUEVES
+  VIERNES
+  SABADO
+  DOMINGO
+}
 
-  instructor     Instructor?
+enum EstadoInscripcion {
+  ACTIVA
+  CANCELADA
+}
+
+enum EstadoAsistencia {
+  PRESENTE
+  AUSENTE
+  TARDANZA
+  JUSTIFICADO
+}
+
+enum EstadoPagoSueldo {
+  PENDIENTE
+  PAGADO
+}
+
+model Usuario {
+  id               String   @id @default(uuid())
+  email            String   @unique
+  passwordHash     String
+  nombre           String
+  rol              Rol      @default(RECEPCION)
+  activo           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  instructor       Instructor?
+  cliente          Cliente?   // solo se usa si el alumno tiene login (fase futura)
   pagosRegistrados Pago[]     @relation("PagosRegistradosPor")
+  asistenciasMarcadas Asistencia[] @relation("AsistenciasMarcadasPor")
+  visitasRegistradas Visita[] @relation("VisitasRegistradasPor")
 
   @@map("usuarios")
 }
 
 model Instructor {
-  id            String   @id @default(uuid())
-  usuarioId     String   @unique
-  usuario       Usuario  @relation(fields: [usuarioId], references: [id])
-  especialidad  String?
-  telefono      String?
-  activo        Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  id           String   @id @default(uuid())
+  usuarioId    String   @unique
+  usuario      Usuario  @relation(fields: [usuarioId], references: [id])
+  especialidad String?
+  telefono     String?
+  sueldoBase   Decimal? @db.Decimal(10, 2)
+  activo       Boolean  @default(true)
+  createdAt    DateTime @default(now())
 
-  bonos         Bono[]
+  bonos        Bono[]
+  descuentos   Descuento[]
+  horarios     HorarioInstructor[]
+  pagosSueldo  PagoSueldo[]
 
   @@map("instructores")
 }
@@ -71,49 +100,202 @@ model Bono {
   motivo       String
   fecha        DateTime   @default(now())
 
+  @@index([instructorId])
   @@map("bonos")
 }
 
-model Cliente {
-  id             String      @id @default(uuid())
-  nombre         String
-  telefono       String?
-  email          String?
-  fechaRegistro  DateTime    @default(now())
-  activo         Boolean     @default(true)
+// Descuentos de sueldo: faltas, adelantos, sanciones, etc.
+model Descuento {
+  id           String     @id @default(uuid())
+  instructorId String
+  instructor   Instructor @relation(fields: [instructorId], references: [id])
+  monto        Decimal    @db.Decimal(10, 2)
+  motivo       String
+  fecha        DateTime   @default(now())
 
-  membresias     Membresia[]
+  @@index([instructorId])
+  @@map("descuentos")
+}
+
+model PagoSueldo {
+  id              String           @id @default(uuid())
+  instructorId    String
+  instructor      Instructor       @relation(fields: [instructorId], references: [id])
+  periodo         String           // ej. "2026-08"
+  montoBase       Decimal          @db.Decimal(10, 2)
+  totalBonos      Decimal          @db.Decimal(10, 2) @default(0)
+  totalDescuentos Decimal          @db.Decimal(10, 2) @default(0)
+  montoTotal      Decimal          @db.Decimal(10, 2)
+  estado         EstadoPagoSueldo @default(PENDIENTE)
+  fechaPago      DateTime?
+  createdAt      DateTime         @default(now())
+
+  @@unique([instructorId, periodo])
+  @@map("pagos_sueldo")
+}
+
+// Plan de membresía configurable: pase diario, mensual, o una promoción
+// con precio y duración propios (ej. "Trimestral Promo Agosto")
+model Plan {
+  id               String    @id @default(uuid())
+  nombre           String    // "Pase Diario", "Mensual", "Trimestral Promo Agosto"
+  duracionDias     Int       // 1 = diario, 30 = mensual, 90 = trimestral, etc.
+  precio           Decimal   @db.Decimal(10, 2)
+  esPromocion      Boolean   @default(false)
+  fechaInicioPromo DateTime?
+  fechaFinPromo    DateTime?
+  activo           Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+
+  membresias       Membresia[]
+
+  @@map("planes")
+}
+
+model Cliente {
+  id            String   @id @default(uuid())
+  usuarioId     String?  @unique // se llena solo si el alumno tiene login
+  usuario       Usuario? @relation(fields: [usuarioId], references: [id])
+  nombre        String
+  telefono      String?
+  email         String?
+  fechaRegistro DateTime @default(now())
+  activo        Boolean  @default(true)
+
+  membresias    Membresia[]
+  inscripciones Inscripcion[]
+  visitas       Visita[]
 
   @@map("clientes")
 }
 
 model Membresia {
-  id                String          @id @default(uuid())
-  clienteId         String
-  cliente           Cliente         @relation(fields: [clienteId], references: [id])
-  tipo              TipoMembresia
-  fechaInicio       DateTime
-  fechaVencimiento  DateTime
-  estado            EstadoMembresia @default(ACTIVA)
-  createdAt         DateTime        @default(now())
+  id               String          @id @default(uuid())
+  clienteId        String
+  cliente          Cliente         @relation(fields: [clienteId], references: [id])
+  planId           String
+  plan             Plan            @relation(fields: [planId], references: [id])
+  precioPagado     Decimal         @db.Decimal(10, 2) // foto del precio del Plan al momento de comprar
+  fechaInicio      DateTime
+  fechaVencimiento DateTime
+  estado           EstadoMembresia @default(ACTIVA)
+  createdAt        DateTime        @default(now())
 
-  pagos             Pago[]
+  pagos            Pago[]
+  pausas           PausaMembresia[]
+  visitas          Visita[]
 
   @@index([clienteId])
   @@index([estado])
+  @@index([planId])
+  @@index([estado, fechaVencimiento]) // para el job que marca membresías vencidas
   @@map("membresias")
 }
 
+// Historial de congelamientos de una membresía (viajes, lesiones, etc.)
+// Al reanudar, la fechaVencimiento de la Membresia se corre los días que duró la pausa
+model PausaMembresia {
+  id          String    @id @default(uuid())
+  membresiaId String
+  membresia   Membresia @relation(fields: [membresiaId], references: [id])
+  fechaInicio DateTime  @default(now())
+  fechaFin    DateTime? // null mientras sigue pausada
+  motivo      String?
+
+  @@index([membresiaId])
+  @@map("pausas_membresia")
+}
+
 model Pago {
-  id               String     @id @default(uuid())
-  membresiaId      String
-  membresia        Membresia  @relation(fields: [membresiaId], references: [id])
-  monto            Decimal    @db.Decimal(10, 2)
-  metodo           MetodoPago
-  fecha            DateTime   @default(now())
-  registradoPorId  String?
-  registradoPor    Usuario?   @relation("PagosRegistradosPor", fields: [registradoPorId], references: [id])
+  id              String     @id @default(uuid())
+  membresiaId     String
+  membresia       Membresia  @relation(fields: [membresiaId], references: [id])
+  monto           Decimal    @db.Decimal(10, 2)
+  metodo          MetodoPago
+  fecha           DateTime   @default(now())
+  registradoPorId String?
+  registradoPor   Usuario?   @relation("PagosRegistradosPor", fields: [registradoPorId], references: [id])
 
   @@index([membresiaId])
   @@map("pagos")
+}
+
+// Plantilla semanal: "Lunes 6:00-7:00, Funcional" (puede tener 1 o varios instructores)
+model Horario {
+  id           String    @id @default(uuid())
+  nombre       String?    // ej. "Funcional", "Yoga"
+  diaSemana    DiaSemana
+  horaInicio   String     // "06:00" (guardado como string simple; validar formato en Zod)
+  horaFin      String     // "07:00"
+  cupoMaximo   Int?
+  activo       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+
+  instructores  HorarioInstructor[]
+  inscripciones Inscripcion[]
+
+  @@index([diaSemana])
+  @@map("horarios")
+}
+
+// Un horario puede tener uno o varios instructores (clases compartidas, reemplazos, etc.)
+model HorarioInstructor {
+  id           String     @id @default(uuid())
+  horarioId    String
+  horario      Horario    @relation(fields: [horarioId], references: [id])
+  instructorId String
+  instructor   Instructor @relation(fields: [instructorId], references: [id])
+
+  @@unique([horarioId, instructorId])
+  @@map("horarios_instructores")
+}
+
+// Un alumno inscrito en un horario. De aquí se deriva su instructor.
+model Inscripcion {
+  id                String            @id @default(uuid())
+  clienteId         String
+  cliente           Cliente           @relation(fields: [clienteId], references: [id])
+  horarioId         String
+  horario           Horario           @relation(fields: [horarioId], references: [id])
+  estado            EstadoInscripcion @default(ACTIVA)
+  fechaInscripcion  DateTime          @default(now())
+
+  asistencias       Asistencia[]
+
+  @@unique([clienteId, horarioId])
+  @@index([horarioId])
+  @@map("inscripciones")
+}
+
+// Un registro de asistencia por día de clase real
+model Asistencia {
+  id             String           @id @default(uuid())
+  inscripcionId  String
+  inscripcion    Inscripcion      @relation(fields: [inscripcionId], references: [id])
+  fecha          DateTime         @db.Date
+  estado         EstadoAsistencia
+  marcadoPorId   String?
+  marcadoPor     Usuario?         @relation("AsistenciasMarcadasPor", fields: [marcadoPorId], references: [id])
+  createdAt      DateTime         @default(now())
+
+  @@unique([inscripcionId, fecha])
+  @@index([fecha])
+  @@map("asistencias")
+}
+
+// Ingreso general al gimnasio: pase diario o alumno que entra a entrenar
+// libre, sin pasar por una clase/horario programado
+model Visita {
+  id              String     @id @default(uuid())
+  clienteId       String
+  cliente         Cliente    @relation(fields: [clienteId], references: [id])
+  membresiaId     String?    // qué membresía/pase cubrió este ingreso, si aplica
+  membresia       Membresia? @relation(fields: [membresiaId], references: [id])
+  fechaHora       DateTime   @default(now())
+  registradoPorId String?
+  registradoPor   Usuario?   @relation("VisitasRegistradasPor", fields: [registradoPorId], references: [id])
+
+  @@index([clienteId])
+  @@index([fechaHora])
+  @@map("visitas")
 }

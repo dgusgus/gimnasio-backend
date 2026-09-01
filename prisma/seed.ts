@@ -1,34 +1,22 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "../src/generated/prisma/client.js";
-import { PrismaPg } from "@prisma/adapter-pg";
-
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
-const prisma = new PrismaClient({ adapter });
+import { prisma } from "../src/lib/prisma.js";
 
 async function main() {
-  const email = process.env.SEED_ADMIN_EMAIL ?? "admin@gimnasio.com";
-  const password = process.env.SEED_ADMIN_PASSWORD ?? "admin1234";
+  const passwordHash = await bcrypt.hash("admin123", 10);
 
-  const existente = await prisma.usuario.findUnique({ where: { email } });
-  if (existente) {
-    console.log(`El admin ${email} ya existe, no se crea de nuevo.`);
-    return;
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-
-  await prisma.usuario.create({
-    data: {
-      nombre: "Administrador",
-      email,
+  const admin = await prisma.usuario.upsert({
+    where: { email: "admin@gimnasio.com" },
+    update: {},
+    create: {
+      email: "admin@gimnasio.com",
       passwordHash,
+      nombre: "Admin",
       rol: "ADMIN",
     },
   });
 
-  console.log(`Admin creado -> email: ${email} / password: ${password}`);
-  console.log("Cambia esta contraseña apenas inicies sesión.");
+  console.log(`Usuario admin listo: ${admin.email} / admin123`);
 }
 
 main()
@@ -36,4 +24,6 @@ main()
     console.error(e);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

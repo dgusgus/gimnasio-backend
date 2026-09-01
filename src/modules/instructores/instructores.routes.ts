@@ -14,6 +14,7 @@ const crearInstructorSchema = z.object({
   password: z.string().min(6),
   especialidad: z.string().optional(),
   telefono: z.string().optional(),
+  sueldoBase: z.number().positive().optional(),
 });
 
 // Crea el Usuario (rol INSTRUCTOR) y su perfil de Instructor en una sola operación
@@ -21,7 +22,7 @@ instructoresRouter.post(
   "/",
   requireRol("ADMIN"),
   asyncHandler(async (req, res) => {
-    const { nombre, email, password, especialidad, telefono } =
+    const { nombre, email, password, especialidad, telefono, sueldoBase } =
       crearInstructorSchema.parse(req.body);
 
     const existente = await prisma.usuario.findUnique({ where: { email } });
@@ -36,7 +37,7 @@ instructoresRouter.post(
         passwordHash,
         rol: "INSTRUCTOR",
         instructor: {
-          create: { especialidad, telefono },
+          create: { especialidad, telefono, sueldoBase },
         },
       },
       include: { instructor: true },
@@ -95,5 +96,46 @@ instructoresRouter.post(
     });
 
     res.status(201).json(bono);
+  })
+);
+
+const descuentoSchema = z.object({
+  monto: z.number().positive(),
+  motivo: z.string().min(2),
+});
+
+instructoresRouter.get(
+  "/:id/descuentos",
+  asyncHandler(async (req, res) => {
+    const instructor = await prisma.instructor.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!instructor) throw new HttpError(404, "Instructor no encontrado");
+
+    const descuentos = await prisma.descuento.findMany({
+      where: { instructorId: req.params.id },
+      orderBy: { fecha: "desc" },
+    });
+
+    res.json(descuentos);
+  })
+);
+
+instructoresRouter.post(
+  "/:id/descuentos",
+  requireRol("ADMIN"),
+  asyncHandler(async (req, res) => {
+    const { monto, motivo } = descuentoSchema.parse(req.body);
+
+    const instructor = await prisma.instructor.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!instructor) throw new HttpError(404, "Instructor no encontrado");
+
+    const descuento = await prisma.descuento.create({
+      data: { instructorId: req.params.id, monto, motivo },
+    });
+
+    res.status(201).json(descuento);
   })
 );

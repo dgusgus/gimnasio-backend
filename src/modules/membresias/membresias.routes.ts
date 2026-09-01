@@ -7,42 +7,37 @@ import { requireAuth, requireRol } from "../../middlewares/auth.js";
 export const membresiasRouter = Router();
 membresiasRouter.use(requireAuth);
 
-const DIAS_POR_TIPO: Record<string, number> = {
-  MENSUAL: 30,
-  TRIMESTRAL: 90,
-  SEMESTRAL: 180,
-  ANUAL: 365,
-};
-
 const crearMembresiaSchema = z.object({
   clienteId: z.string().uuid(),
-  tipo: z.enum(["MENSUAL", "TRIMESTRAL", "SEMESTRAL", "ANUAL"]),
+  planId: z.string().uuid(),
   fechaInicio: z.coerce.date().optional(),
 });
 
-// Crea la membresía. No registra el pago aquí: eso es responsabilidad
-// del módulo de pagos, para no acoplar "crear membresía" con "cobrar".
+// Crea la membresía a partir de un Plan. No registra el pago aquí: eso es
+// responsabilidad del módulo de pagos, para no acoplar "crear membresía"
+// con "cobrar".
 membresiasRouter.post(
   "/",
   requireRol("ADMIN", "RECEPCION"),
   asyncHandler(async (req, res) => {
-    const { clienteId, tipo, fechaInicio } = crearMembresiaSchema.parse(
-      req.body
-    );
+    const { clienteId, planId, fechaInicio } = crearMembresiaSchema.parse(req.body);
 
-    const cliente = await prisma.cliente.findUnique({
-      where: { id: clienteId },
-    });
+    const [cliente, plan] = await Promise.all([
+      prisma.cliente.findUnique({ where: { id: clienteId } }),
+      prisma.plan.findUnique({ where: { id: planId } }),
+    ]);
     if (!cliente) throw new HttpError(404, "Cliente no encontrado");
+    if (!plan || !plan.activo) throw new HttpError(404, "Plan no encontrado o inactivo");
 
     const inicio = fechaInicio ?? new Date();
     const vencimiento = new Date(inicio);
-    vencimiento.setDate(vencimiento.getDate() + DIAS_POR_TIPO[tipo]);
+    vencimiento.setDate(vencimiento.getDate() + plan.duracionDias);
 
     const membresia = await prisma.membresia.create({
       data: {
         clienteId,
-        tipo,
+        planId,
+        precioPagado: plan.precio, // foto del precio del plan al momento de comprar
         fechaInicio: inicio,
         fechaVencimiento: vencimiento,
         estado: "ACTIVA",
@@ -66,7 +61,7 @@ membresiasRouter.get(
         estado: "ACTIVA",
         fechaVencimiento: { lte: limite },
       },
-      include: { cliente: true },
+      include: { cliente: true, plan: true },
       orderBy: { fechaVencimiento: "asc" },
     });
 
@@ -83,5 +78,72 @@ membresiasRouter.patch(
       data: { estado: "CANCELADA" },
     });
     res.json(membresia);
+  })
+);
+
+const pausarSchema = z.object({ motivo: z.string().optional() });
+
+membresiasRouter.patch(
+  "/:id/pausar",
+  requireRol("ADMIN", "RECEPCION"),
+  asyncHandler(async (req, res) => {
+    const { motivo } = pausarSchema.parse(req.body ?? {});
+
+    const membresia = await prisma.membresia.findUnique({ where: { id: req.params.id } });
+    if (!membresia) throw new HttpError(404, "Membresía no encontrada");
+    if (membresia.estado !== "ACTIVA") {
+      throw new HttpError(400, "Solo se puede pausar una membresía activa");
+    }
+
+    const [, pausa] = await prisma.$transaction([
+      prisma.membresia.update({
+        where: { id: membresia.id },
+        data: { estado: "CONGELADA" },
+      }),
+      prisma.pausaMembresia.create({
+        data: { membresiaId: membresia.id, motivo },
+      }),
+    ]);
+
+    res.json(pausa);
+  })
+);
+
+// Reanuda la membresía y corre la fechaVencimiento los días que duró la pausa
+membresiasRouter.patch(
+  "/:id/reanudar",
+  requireRol("ADMIN", "RECEPCION"),
+  asyncHandler(async (req, res) => {
+    const membresia = await prisma.membresia.findUnique({ where: { id: req.params.id } });
+    if (!membresia) throw new HttpError(404, "Membresía no encontrada");
+    if (membresia.estado !== "CONGELADA") {
+      throw new HttpError(400, "La membresía no está pausada");
+    }
+
+    const pausaActiva = await prisma.pausaMembresia.findFirst({
+      where: { membresiaId: membresia.id, fechaFin: null },
+      orderBy: { fechaInicio: "desc" },
+    });
+    if (!pausaActiva) throw new HttpError(400, "No hay una pausa activa registrada");
+
+    const ahora = new Date();
+    const diasPausados = Math.ceil(
+      (ahora.getTime() - pausaActiva.fechaInicio.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    const nuevoVencimiento = new Date(membresia.fechaVencimiento);
+    nuevoVencimiento.setDate(nuevoVencimiento.getDate() + diasPausados);
+
+    const [membresiaActualizada] = await prisma.$transaction([
+      prisma.membresia.update({
+        where: { id: membresia.id },
+        data: { estado: "ACTIVA", fechaVencimiento: nuevoVencimiento },
+      }),
+      prisma.pausaMembresia.update({
+        where: { id: pausaActiva.id },
+        data: { fechaFin: ahora },
+      }),
+    ]);
+
+    res.json(membresiaActualizada);
   })
 );
