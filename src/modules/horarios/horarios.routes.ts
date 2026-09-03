@@ -24,17 +24,20 @@ const horarioSchema = z.object({
   horaFin: z.string().regex(/^\d{2}:\d{2}$/, "Formato HH:MM"),
   cupoMaximo: z.number().int().positive().optional(),
   instructorIds: z.array(z.string().uuid()).min(1),
+  activo: z.boolean().optional(),
 });
 
-// GET /horarios?diaSemana=LUNES&instructorId=...
+// GET /horarios?diaSemana=LUNES&instructorId=...&activo=true
+// Sin el parámetro "activo", devuelve TODOS (activos e inactivos) para
+// que se puedan encontrar y reactivar los desactivados.
 horariosRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    const { diaSemana, instructorId } = req.query;
+    const { diaSemana, instructorId, activo } = req.query;
 
     const horarios = await prisma.horario.findMany({
       where: {
-        activo: true,
+        ...(activo !== undefined ? { activo: activo === "true" } : {}),
         ...(diaSemana ? { diaSemana: diaSemanaEnum.parse(diaSemana) } : {}),
         ...(instructorId
           ? { instructores: { some: { instructorId: String(instructorId) } } }

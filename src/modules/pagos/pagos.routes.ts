@@ -21,8 +21,29 @@ pagosRouter.post(
 
     const membresia = await prisma.membresia.findUnique({
       where: { id: membresiaId },
+      include: { pagos: true },
     });
     if (!membresia) throw new HttpError(404, "Membresía no encontrada");
+
+    // El precio de la membresía es precioPagado (la foto del precio del plan
+    // al momento de comprarla). El saldo es lo que falta de ese monto menos
+    // lo ya pagado — así no se puede cobrar de más ni cobrar infinitas veces
+    // la misma membresía.
+    const totalPagadoPrevio = membresia.pagos.reduce(
+      (acc, p) => acc + Number(p.monto),
+      0
+    );
+    const saldo = Number(membresia.precioPagado) - totalPagadoPrevio;
+
+    if (saldo <= 0) {
+      throw new HttpError(400, "Esta membresía ya está completamente pagada");
+    }
+    if (monto > saldo) {
+      throw new HttpError(
+        400,
+        `El monto excede el saldo pendiente (Bs ${saldo.toFixed(2)})`
+      );
+    }
 
     // Transacción: si algo falla, no queda un pago huérfano ni una
     // membresía reactivada sin su pago correspondiente.

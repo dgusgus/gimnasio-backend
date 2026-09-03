@@ -14,6 +14,7 @@ const planSchema = z.object({
   esPromocion: z.boolean().optional(),
   fechaInicioPromo: z.coerce.date().optional(),
   fechaFinPromo: z.coerce.date().optional(),
+  activo: z.boolean().optional(),
 });
 
 // GET /planes?activo=true -> lo que ve recepción para vender

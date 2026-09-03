@@ -7,6 +7,30 @@ import { requireAuth, requireRol } from "../../middlewares/auth.js";
 export const membresiasRouter = Router();
 membresiasRouter.use(requireAuth);
 
+// GET /membresias?clienteId=... -> membresías de un cliente con su saldo
+// pendiente ya calculado (precioPagado - suma de sus pagos). Sin esto, el
+// frontend no tiene forma de saber cuánto falta cobrar de cada una.
+membresiasRouter.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const { clienteId } = req.query;
+
+    const membresias = await prisma.membresia.findMany({
+      where: clienteId ? { clienteId: String(clienteId) } : {},
+      include: { plan: true, pagos: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const conSaldo = membresias.map((m) => {
+      const totalPagado = m.pagos.reduce((acc, p) => acc + Number(p.monto), 0);
+      const saldo = Math.max(Number(m.precioPagado) - totalPagado, 0);
+      return { ...m, totalPagado, saldo };
+    });
+
+    res.json(conSaldo);
+  })
+);
+
 const crearMembresiaSchema = z.object({
   clienteId: z.string().uuid(),
   planId: z.string().uuid(),
