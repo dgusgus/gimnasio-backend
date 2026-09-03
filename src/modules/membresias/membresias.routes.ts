@@ -10,19 +10,24 @@ membresiasRouter.use(requireAuth);
 // GET /membresias?clienteId=... -> membresías de un cliente con su saldo
 // pendiente ya calculado (precioPagado - suma de sus pagos). Sin esto, el
 // frontend no tiene forma de saber cuánto falta cobrar de cada una.
+const estadoMembresiaEnum = z.enum(["ACTIVA", "CONGELADA", "VENCIDA", "CANCELADA"]);
+
 membresiasRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    const { clienteId } = req.query;
+    const { clienteId, estado } = req.query;
 
     const membresias = await prisma.membresia.findMany({
-      where: clienteId ? { clienteId: String(clienteId) } : {},
-      include: { plan: true, pagos: true },
+      where: {
+        ...(clienteId ? { clienteId: String(clienteId) } : {}),
+        ...(estado ? { estado: estadoMembresiaEnum.parse(estado) } : {}),
+      },
+      include: { plan: true, pagos: true, cliente: true },
       orderBy: { createdAt: "desc" },
     });
 
     const conSaldo = membresias.map((m) => {
-      const totalPagado = m.pagos.reduce((acc, p) => acc + Number(p.monto), 0);
+      const totalPagado = m.pagos.reduce((acc: number, p) => acc + Number(p.monto), 0);
       const saldo = Math.max(Number(m.precioPagado) - totalPagado, 0);
       return { ...m, totalPagado, saldo };
     });
@@ -52,6 +57,23 @@ membresiasRouter.post(
     ]);
     if (!cliente) throw new HttpError(404, "Cliente no encontrado");
     if (!plan || !plan.activo) throw new HttpError(404, "Plan no encontrado o inactivo");
+
+    // Solo puede haber una membresía vigente por cliente a la vez. Si ya
+    // tiene una ACTIVA/CONGELADA que no venció, hay que esperar a que
+    // termine (o cancelarla a mano) antes de vender una nueva.
+    const vigente = await prisma.membresia.findFirst({
+      where: {
+        clienteId,
+        estado: { in: ["ACTIVA", "CONGELADA"] },
+        fechaVencimiento: { gte: new Date() },
+      },
+    });
+    if (vigente) {
+      throw new HttpError(
+        409,
+        `Este cliente ya tiene una membresía vigente hasta ${vigente.fechaVencimiento.toLocaleDateString("es-BO")}`
+      );
+    }
 
     const inicio = fechaInicio ?? new Date();
     const vencimiento = new Date(inicio);
