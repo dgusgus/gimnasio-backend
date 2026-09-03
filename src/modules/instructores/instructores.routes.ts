@@ -17,6 +17,15 @@ const crearInstructorSchema = z.object({
   sueldoBase: z.number().positive().optional(),
 });
 
+const actualizarInstructorSchema = z.object({
+  nombre: z.string().min(2).optional(),
+  email: z.string().email().optional(),
+  especialidad: z.string().nullable().optional(),
+  telefono: z.string().nullable().optional(),
+  sueldoBase: z.number().positive().nullable().optional(),
+  password: z.string().min(6).optional(),
+});
+
 // Crea el Usuario (rol INSTRUCTOR) y su perfil de Instructor en una sola operación
 instructoresRouter.post(
   "/",
@@ -55,6 +64,24 @@ instructoresRouter.get(
       include: { usuario: { select: { nombre: true, email: true } } },
     });
     res.json(instructores);
+  })
+);
+
+instructoresRouter.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const instructor = await prisma.instructor.findUnique({
+      where: { id: req.params.id },
+      include: {
+        usuario: {
+          select: { nombre: true, email: true, activo: true },
+        },
+        bonos: { orderBy: { fecha: "desc" }, take: 10 },
+        descuentos: { orderBy: { fecha: "desc" }, take: 10 },
+      },
+    });
+    if (!instructor) throw new HttpError(404, "Instructor no encontrado");
+    res.json(instructor);
   })
 );
 
@@ -137,5 +164,86 @@ instructoresRouter.post(
     });
 
     res.status(201).json(descuento);
+  })
+);
+
+// Actualiza los datos del Usuario y del perfil de Instructor.
+// Nombre/email/password viven en Usuario; el resto en el perfil de Instructor.
+instructoresRouter.patch(
+  "/:id",
+  requireRol("ADMIN"),
+  asyncHandler(async (req, res) => {
+    const data = actualizarInstructorSchema.parse(req.body);
+
+    const instructor = await prisma.instructor.findUnique({
+      where: { id: req.params.id },
+      include: { usuario: true },
+    });
+    if (!instructor) throw new HttpError(404, "Instructor no encontrado");
+
+    const { nombre, email, password, ...perfil } = data;
+
+    if (email && email !== instructor.usuario.email) {
+      const emailExistente = await prisma.usuario.findFirst({
+        where: { email, id: { not: instructor.usuario.id } },
+      });
+      if (emailExistente) throw new HttpError(409, "Ese email ya está registrado");
+    }
+
+    const actualizado = await prisma.$transaction(async (tx) => {
+      const usuarioActualizado = await tx.usuario.update({
+        where: { id: instructor.usuario.id },
+        data: {
+          ...(nombre !== undefined ? { nombre } : {}),
+          ...(email !== undefined ? { email } : {}),
+          ...(password !== undefined
+            ? { passwordHash: await bcrypt.hash(password, 10) }
+            : {}),
+        },
+      });
+
+      const instructorActualizado = await tx.instructor.update({
+        where: { id: instructor.id },
+        data: {
+          ...(perfil.especialidad !== undefined
+            ? { especialidad: perfil.especialidad }
+            : {}),
+          ...(perfil.telefono !== undefined ? { telefono: perfil.telefono } : {}),
+          ...(perfil.sueldoBase !== undefined
+            ? { sueldoBase: perfil.sueldoBase }
+            : {}),
+        },
+      });
+
+      return { usuario: usuarioActualizado, instructor: instructorActualizado };
+    });
+
+    res.json(actualizado);
+  })
+);
+
+instructoresRouter.delete(
+  "/:id",
+  requireRol("ADMIN"),
+  asyncHandler(async (req, res) => {
+    // Soft delete: marcamos inactivos al Usuario y al perfil de Instructor,
+    // conservando su historial de bonos, descuentos y pagos de sueldo.
+    const instructor = await prisma.instructor.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!instructor) throw new HttpError(404, "Instructor no encontrado");
+
+    const eliminado = await prisma.$transaction([
+      prisma.instructor.update({
+        where: { id: instructor.id },
+        data: { activo: false },
+      }),
+      prisma.usuario.update({
+        where: { id: instructor.usuarioId },
+        data: { activo: false },
+      }),
+    ]);
+
+    res.json(eliminado[0]);
   })
 );
